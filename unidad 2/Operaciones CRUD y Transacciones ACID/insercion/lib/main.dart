@@ -1,18 +1,17 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
-//import 'package:sqflite/sqflite.dart';
 import 'package:sqflite_common_ffi/sqflite_common_ffi.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  
+
   // Inicializar FFI en Windows o Linux
   if (Platform.isWindows || Platform.isLinux) {
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
   }
-  
+
   runApp(const MyApp());
 }
 
@@ -27,18 +26,20 @@ class DatabaseHelper {
 
   Future<Database> get database async {
     if (_database != null) return _database!;
-    _database = await _initDB('productos_acid.db');
+    _database = await _initDB('productos_acid.db', targetVersion: 1);
     return _database!;
   }
 
-  Future<Database> _initDB(String filePath) async {
+  // Permite abrir la BD especificando la versión destino
+  Future<Database> _initDB(String filePath, {int targetVersion = 1}) async {
     final dbPath = await getDatabasesPath();
     final path = p.join(dbPath, filePath);
 
     return await openDatabase(
       path,
-      version: 1,
+      version: targetVersion,
       onCreate: (db, version) async {
+        // Esquema base: Versión 1
         await db.execute('''
           CREATE TABLE items (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -46,18 +47,66 @@ class DatabaseHelper {
             price REAL NOT NULL
           )
         ''');
+
+        // Si se crea directamente en versión 2 o superior
+        if (version >= 2) {
+          await db.execute('ALTER TABLE items ADD COLUMN ubicacion_nodo TEXT;');
+        }
+      },
+      onUpgrade: (db, oldVersion, newVersion) async {
+        // MIGRACIÓN MÓDULO 2: v1 -> v2
+        // Agrega la columna ubicacion_nodo sin perder ningún registro previo
+        if (oldVersion < 2) {
+          await db.execute(
+            'ALTER TABLE items ADD COLUMN ubicacion_nodo TEXT DEFAULT "Sin asignar";',
+          );
+        }
       },
     );
   }
 
+  // Obtiene la versión actual configurada en el PRAGMA de SQLite
+  Future<int> getCurrentVersion() async {
+    final db = await database;
+    return await db.getVersion();
+  }
+
+  // Disparador de la migración a v2
+  Future<bool> upgradeToV2() async {
+    final currentV = await getCurrentVersion();
+    if (currentV >= 2) {
+      return false; // Ya está migrada
+    }
+
+    // Cerramos la conexión activa para forzar la reapertura con upgrade
+    if (_database != null) {
+      await _database!.close();
+      _database = null;
+    }
+
+    // Abrimos con version: 2 (esto dispara onUpgrade)
+    _database = await _initDB('productos_acid.db', targetVersion: 2);
+    return true;
+  }
+
   // --- OPERACIONES CRUD ---
 
-  // CREATE: Inserta un registro individual
-  Future<int> insertItem(String name, double price) async {
+  // CREATE: Compatible con v1 y v2 (ubicacion_nodo es opcional)
+  Future<int> insertItem(String name, double price, [String? ubicacionNodo]) async {
     final db = await database;
+    final Map<String, dynamic> row = {
+      'name': name,
+      'price': price,
+    };
+
+    final currentVersion = await db.getVersion();
+    if (currentVersion >= 2 && ubicacionNodo != null) {
+      row['ubicacion_nodo'] = ubicacionNodo;
+    }
+
     return await db.insert(
       'items',
-      {'name': name, 'price': price},
+      row,
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
   }
@@ -68,12 +117,22 @@ class DatabaseHelper {
     return await db.query('items', orderBy: 'id DESC');
   }
 
-  // UPDATE: Actualiza un registro existente
-  Future<int> updateItem(int id, String name, double price) async {
+  // UPDATE: Permite actualizar también ubicacion_nodo si existe
+  Future<int> updateItem(int id, String name, double price, [String? ubicacionNodo]) async {
     final db = await database;
+    final Map<String, dynamic> row = {
+      'name': name,
+      'price': price,
+    };
+
+    final currentVersion = await db.getVersion();
+    if (currentVersion >= 2 && ubicacionNodo != null) {
+      row['ubicacion_nodo'] = ubicacionNodo;
+    }
+
     return await db.update(
       'items',
-      {'name': name, 'price': price},
+      row,
       where: 'id = ?',
       whereArgs: [id],
     );
@@ -90,27 +149,20 @@ class DatabaseHelper {
   }
 
   // --- TRANSACCIÓN ACID POR LOTE (BATCH) ---
-  // Inserción masiva optimizada: Atomicidad y Durabilidad garantizadas
   Future<int> insertBatch(List<Map<String, dynamic>> itemsList) async {
     final db = await database;
 
-    // db.transaction garantiza Atomicidad (todo o nada) y Aislamiento.
-    // batch() compila las operaciones en un solo viaje al motor de SQLite.
     return await db.transaction<int>((txn) async {
       final batch = txn.batch();
-
       for (var item in itemsList) {
         batch.insert('items', item);
       }
-
-      // commit ejecuta todas las sentencias en un único paso de I/O.
-      // noResult: true ahorra memoria al procesar miles de registros.
       final results = await batch.commit(noResult: false);
       return results.length;
     });
   }
 
-  // Limpieza total (útil para pruebas)
+  // Limpieza total
   Future<int> clearAll() async {
     final db = await database;
     return await db.delete('items');
@@ -132,7 +184,7 @@ class MyApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
         useMaterial3: true,
       ),
-      home: const MyHomePage(title: 'CRUD & Transacciones ACID'),
+      home: const MyHomePage(title: 'CRUD, ACID & Migración v2'),
     );
   }
 }
@@ -150,6 +202,7 @@ class _MyHomePageState extends State<MyHomePage> {
   final DatabaseHelper _dbHelper = DatabaseHelper.instance;
   List<Map<String, dynamic>> _items = [];
   bool _isLoading = false;
+  int _dbVersion = 1;
 
   @override
   void initState() {
@@ -157,39 +210,84 @@ class _MyHomePageState extends State<MyHomePage> {
     _refreshItems();
   }
 
-  // READ (Actualiza la vista)
   Future<void> _refreshItems() async {
     setState(() => _isLoading = true);
     final data = await _dbHelper.getItems();
+    final v = await _dbHelper.getCurrentVersion();
     setState(() {
       _items = data;
+      _dbVersion = v;
       _isLoading = false;
     });
   }
 
+  // ACCIÓN DEL BOTÓN: Migración a v2
+  Future<void> _handleMigration() async {
+    setState(() => _isLoading = true);
+    final success = await _dbHelper.upgradeToV2();
+    await _refreshItems();
+
+    if (!mounted) return;
+
+    if (success) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: Colors.teal,
+          content: Text(
+            '¡Migración exitosa a v2! Se añadió la columna "ubicacion_nodo" sin perder registros.',
+          ),
+        ),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('La base de datos ya se encuentra en la versión 2.'),
+        ),
+      );
+    }
+  }
+
   // CREATE / UPDATE DIALOG
-  void _showFormDialog({int? id, String? currentName, double? currentPrice}) {
+  void _showFormDialog({
+    int? id,
+    String? currentName,
+    double? currentPrice,
+    String? currentNodo,
+  }) {
     final nameController = TextEditingController(text: currentName ?? '');
-    final priceController =
-        TextEditingController(text: currentPrice?.toString() ?? '');
+    final priceController = TextEditingController(text: currentPrice?.toString() ?? '');
+    final nodoController = TextEditingController(text: currentNodo ?? '');
 
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
         title: Text(id == null ? 'Nuevo Registro' : 'Editar Registro'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: nameController,
-              decoration: const InputDecoration(labelText: 'Nombre'),
-            ),
-            TextField(
-              controller: priceController,
-              decoration: const InputDecoration(labelText: 'Precio'),
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            ),
-          ],
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: nameController,
+                decoration: const InputDecoration(labelText: 'Nombre'),
+              ),
+              TextField(
+                controller: priceController,
+                decoration: const InputDecoration(labelText: 'Precio'),
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              ),
+              if (_dbVersion >= 2) ...[
+                const SizedBox(height: 10),
+                TextField(
+                  controller: nodoController,
+                  decoration: const InputDecoration(
+                    labelText: 'Ubicación Nodo (v2)',
+                    hintText: 'Ej. Nodo-A1 / Almacén Central',
+                    prefixIcon: Icon(Icons.hub_outlined),
+                  ),
+                ),
+              ],
+            ],
+          ),
         ),
         actions: [
           TextButton(
@@ -200,15 +298,23 @@ class _MyHomePageState extends State<MyHomePage> {
             onPressed: () async {
               final name = nameController.text.trim();
               final price = double.tryParse(priceController.text) ?? 0.0;
+              final nodo = nodoController.text.trim();
 
               if (name.isEmpty) return;
 
               if (id == null) {
-                // CREATE
-                await _dbHelper.insertItem(name, price);
+                await _dbHelper.insertItem(
+                  name,
+                  price,
+                  _dbVersion >= 2 ? (nodo.isEmpty ? 'Sin asignar' : nodo) : null,
+                );
               } else {
-                // UPDATE
-                await _dbHelper.updateItem(id, name, price);
+                await _dbHelper.updateItem(
+                  id,
+                  name,
+                  price,
+                  _dbVersion >= 2 ? nodo : null,
+                );
               }
 
               if (mounted) Navigator.pop(context);
@@ -221,7 +327,6 @@ class _MyHomePageState extends State<MyHomePage> {
     );
   }
 
-  // DELETE
   Future<void> _deleteItem(int id) async {
     await _dbHelper.deleteItem(id);
     _refreshItems();
@@ -232,22 +337,24 @@ class _MyHomePageState extends State<MyHomePage> {
     }
   }
 
-  // INSERCIÓN MASIVA OPTIMIZADA (Batch + Transaction)
   Future<void> _runMassiveBatchInsert() async {
     setState(() => _isLoading = true);
-
     final stopwatch = Stopwatch()..start();
 
-    // 1. Preparamos 1,000 registros en memoria
     final List<Map<String, dynamic>> massiveData = List.generate(
       1000,
-      (index) => {
-        'name': 'Producto Lote #${index + 1}',
-        'price': (index + 1) * 1.5,
+      (index) {
+        final map = <String, dynamic>{
+          'name': 'Producto Lote #${index + 1}',
+          'price': (index + 1) * 1.5,
+        };
+        if (_dbVersion >= 2) {
+          map['ubicacion_nodo'] = 'Nodo-${(index % 5) + 1}';
+        }
+        return map;
       },
     );
 
-    // 2. Ejecución dentro del bloque transaccional
     final count = await _dbHelper.insertBatch(massiveData);
     stopwatch.stop();
 
@@ -258,7 +365,7 @@ class _MyHomePageState extends State<MyHomePage> {
         SnackBar(
           backgroundColor: Colors.green.shade800,
           content: Text(
-            '¡Éxito ACID! Se insertaron $count registros en ${stopwatch.elapsedMilliseconds} ms sin congelar la UI.',
+            '¡Éxito ACID! $count registros insertados en ${stopwatch.elapsedMilliseconds} ms.',
           ),
         ),
       );
@@ -286,7 +393,44 @@ class _MyHomePageState extends State<MyHomePage> {
           ? const Center(child: CircularProgressIndicator())
           : Column(
               children: [
-                // Panel de control transaccional
+                // Barra de Estado de Versión y Control de Migración
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  color: _dbVersion >= 2 ? Colors.teal.shade50 : Colors.amber.shade50,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(
+                            _dbVersion >= 2 ? Icons.check_circle : Icons.warning_amber,
+                            color: _dbVersion >= 2 ? Colors.teal : Colors.orange,
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Versión BD: v$_dbVersion ${_dbVersion >= 2 ? "(Migrada con ubicacion_nodo)" : "(Original)"}',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: _dbVersion >= 2 ? Colors.teal.shade900 : Colors.brown,
+                            ),
+                          ),
+                        ],
+                      ),
+                      // BOTÓN DE MIGRACIÓN DE ESQUEMA
+                      ElevatedButton.icon(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: _dbVersion >= 2 ? Colors.grey.shade400 : Colors.orange,
+                          foregroundColor: Colors.white,
+                        ),
+                        icon: const Icon(Icons.upgrade),
+                        label: const Text('Migrar a v2'),
+                        onPressed: _dbVersion >= 2 ? null : _handleMigration,
+                      ),
+                    ],
+                  ),
+                ),
+
+                // Panel de control Batch ACID
                 Container(
                   padding: const EdgeInsets.all(12),
                   color: Theme.of(context).colorScheme.surfaceContainerHighest,
@@ -305,7 +449,8 @@ class _MyHomePageState extends State<MyHomePage> {
                     ],
                   ),
                 ),
-                // Lista de elementos (CRUD Read/Update/Delete)
+
+                // Lista de elementos
                 Expanded(
                   child: _items.isEmpty
                       ? const Center(child: Text('No hay registros guardados.'))
@@ -314,13 +459,27 @@ class _MyHomePageState extends State<MyHomePage> {
                           separatorBuilder: (_, __) => const Divider(height: 1),
                           itemBuilder: (context, index) {
                             final item = _items[index];
+                            final hasNodo = item.containsKey('ubicacion_nodo') && item['ubicacion_nodo'] != null;
+
                             return ListTile(
                               leading: CircleAvatar(
                                 child: Text('${item['id']}'),
                               ),
                               title: Text(item['name']),
-                              subtitle: Text(
-                                '\$${(item['price'] as num).toStringAsFixed(2)}',
+                              subtitle: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text('\$${(item['price'] as num).toStringAsFixed(2)}'),
+                                  if (hasNodo)
+                                    Text(
+                                      'Ubicación: ${item['ubicacion_nodo']}',
+                                      style: TextStyle(
+                                        color: Colors.teal.shade700,
+                                        fontWeight: FontWeight.w600,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                ],
                               ),
                               trailing: Row(
                                 mainAxisSize: MainAxisSize.min,
@@ -331,6 +490,7 @@ class _MyHomePageState extends State<MyHomePage> {
                                       id: item['id'],
                                       currentName: item['name'],
                                       currentPrice: (item['price'] as num).toDouble(),
+                                      currentNodo: item['ubicacion_nodo'] as String?,
                                     ),
                                   ),
                                   IconButton(
