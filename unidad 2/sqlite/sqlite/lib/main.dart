@@ -3,12 +3,12 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
-// 1. Usamos el alias 'p' para evitar cualquier conflicto con Flutter
 import 'package:path/path.dart' as p; 
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // Configura SQLite FFI para plataformas de escritorio 
   if (!kIsWeb && (Platform.isWindows || Platform.isLinux)) {
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
@@ -16,6 +16,7 @@ void main() {
   runApp(const MyApp());
 }
 
+// Modelo de datos para las lecturas de los sensores
 class SensorReading {
   final int? id;
   final String sensorType;
@@ -29,6 +30,7 @@ class SensorReading {
     required this.timestamp,
   });
 
+  // Convierte el objeto a un Map para insertarlo en SQLite
   Map<String, dynamic> toMap() {
     return {
       'id': id,
@@ -39,18 +41,21 @@ class SensorReading {
   }
 }
 
+// Clase Singleton para la administración de la base de datos
 class DatabaseHelper {
   static final DatabaseHelper instance = DatabaseHelper._init();
   static Database? _database;
 
   DatabaseHelper._init();
 
+  // Obtiene la instancia de la BD o la inicializa si aún no existe
   Future<Database> get database async {
     if (_database != null) return _database!;
     _database = await _initDB('iot_local.db');
     return _database!;
   }
 
+  // Inicializa la BD en la ruta local y habilita claves foráneas
   Future<Database> _initDB(String filePath) async {
     final dbPath = await getDatabasesPath();
     final fullPath = p.join(dbPath, filePath);
@@ -60,11 +65,13 @@ class DatabaseHelper {
       version: 1,
       onCreate: _createDB,
       onConfigure: (db) async {
+        // Habilita el soporte de Foreign Keys en SQLite
         await db.execute('PRAGMA foreign_keys = ON');
       },
     );
   }
 
+  // Crea la estructura inicial de la tabla
   Future _createDB(Database db, int version) async {
     await db.execute('''
       CREATE TABLE readings (
@@ -76,13 +83,15 @@ class DatabaseHelper {
     ''');
   }
 
-  // --- CRUD OPERATIONS ---
+  // OPERACIONES
 
+  // Inserta una nueva lectura en la tabla
   Future<int> insertReading(SensorReading reading) async {
     final db = await instance.database;
     return await db.insert('readings', reading.toMap());
   }
 
+  // Consulta y mapea todas las lecturas ordenadas por ID descendente
   Future<List<SensorReading>> getAllReadings() async {
     final db = await instance.database;
     final result = await db.query('readings', orderBy: 'id DESC');
@@ -95,6 +104,7 @@ class DatabaseHelper {
     )).toList();
   }
 
+  // Actualiza los campos de un registro mediante su ID
   Future<int> updateReading(SensorReading reading) async {
     final db = await instance.database;
     return db.update(
@@ -105,6 +115,7 @@ class DatabaseHelper {
     );
   }
 
+  // Elimina un registro de la base de datos según su ID
   Future<int> deleteReading(int id) async {
     final db = await instance.database;
     return await db.delete(
@@ -114,6 +125,7 @@ class DatabaseHelper {
     );
   }
 
+  // Retorna el conteo total de registros almacenados
   Future<int> getCount() async {
     final db = await instance.database;
     final result = await db.rawQuery('SELECT COUNT(*) FROM readings');
@@ -121,9 +133,7 @@ class DatabaseHelper {
   }
 }
 
-// ==========================================
-// UI - FLUTTER
-// ==========================================
+// UI
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
@@ -140,6 +150,7 @@ class MyApp extends StatelessWidget {
   }
 }
 
+// Pantalla principal interactiva
 class MyHomePage extends StatefulWidget {
   const MyHomePage({super.key, required this.title});
   final String title;
@@ -152,6 +163,7 @@ class _MyHomePageState extends State<MyHomePage> {
   int _counter = 0;
   List<SensorReading> _readings = [];
 
+  // Controladores de texto para los campos del formulario
   final TextEditingController _typeController = TextEditingController();
   final TextEditingController _valueController = TextEditingController();
 
@@ -161,6 +173,7 @@ class _MyHomePageState extends State<MyHomePage> {
     _refreshData();
   }
 
+  // Libera la memoria utilizada por los controladores
   @override
   void dispose() {
     _typeController.dispose();
@@ -168,6 +181,7 @@ class _MyHomePageState extends State<MyHomePage> {
     super.dispose();
   }
 
+  // Refresca el conteo total y la lista de registros desde la base de datos
   void _refreshData() async {
     final count = await DatabaseHelper.instance.getCount();
     final data = await DatabaseHelper.instance.getAllReadings();
@@ -177,6 +191,7 @@ class _MyHomePageState extends State<MyHomePage> {
     });
   }
 
+  // Elimina un registro por ID y actualiza la lista en pantalla
   void _deleteReading(int id) async {
     await DatabaseHelper.instance.deleteReading(id);
     _refreshData();
@@ -188,9 +203,11 @@ class _MyHomePageState extends State<MyHomePage> {
     );
   }
 
+  // Muestra el cuadro de diálogo para registrar o actualizar una lectura
   void _showFormDialog([SensorReading? existingReading]) {
     final isEditing = existingReading != null;
     
+    // Precarga datos en el formulario si se está editando
     if (isEditing) {
       _typeController.text = existingReading.sensorType;
       _valueController.text = existingReading.value.toString();
@@ -224,12 +241,14 @@ class _MyHomePageState extends State<MyHomePage> {
           ),
           ElevatedButton(
             onPressed: () async {
+              // Validaciones previas al guardado
               if (_typeController.text.isEmpty || _valueController.text.isEmpty) {
                 return;
               }
               final valueParsed = double.tryParse(_valueController.text);
               if (valueParsed == null) return;
 
+              // Construcción de la lectura con fecha/hora actual si es nuevo
               final reading = SensorReading(
                 id: isEditing ? existingReading.id : null,
                 sensorType: _typeController.text,
@@ -237,6 +256,7 @@ class _MyHomePageState extends State<MyHomePage> {
                 timestamp: isEditing ? existingReading.timestamp : DateTime.now().toString().substring(0, 19),
               );
 
+              // Inserta o actualiza dependiendo del caso
               if (isEditing) {
                 await DatabaseHelper.instance.updateReading(reading);
               } else {
@@ -263,6 +283,7 @@ class _MyHomePageState extends State<MyHomePage> {
       ),
       body: Column(
         children: [
+          // Header con el conteo total de registros
           Padding(
             padding: const EdgeInsets.all(16.0),
             child: Text(
@@ -271,6 +292,7 @@ class _MyHomePageState extends State<MyHomePage> {
             ),
           ),
           const Divider(),
+          // Tabla interactiva con scroll horizontal y vertical
           Expanded(
             child: _readings.isEmpty
                 ? const Center(child: Text('No hay datos guardados aún.'))
@@ -286,6 +308,7 @@ class _MyHomePageState extends State<MyHomePage> {
                           DataColumn(label: Text('Fecha/Hora', style: TextStyle(fontWeight: FontWeight.bold))),
                           DataColumn(label: Text('Acciones', style: TextStyle(fontWeight: FontWeight.bold))),
                         ],
+                        // Mapea las lecturas recuperadas a filas de la tabla
                         rows: _readings.map((reading) {
                           return DataRow(cells: [
                             DataCell(Text(reading.id.toString())),
@@ -314,6 +337,7 @@ class _MyHomePageState extends State<MyHomePage> {
           ),
         ],
       ),
+      // Botón flotante para agregar nuevos registros
       floatingActionButton: FloatingActionButton(
         onPressed: () => _showFormDialog(),
         tooltip: 'Añadir Lectura',

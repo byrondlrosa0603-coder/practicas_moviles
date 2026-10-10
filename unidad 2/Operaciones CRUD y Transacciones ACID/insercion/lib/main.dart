@@ -6,7 +6,7 @@ import 'package:sqflite_common_ffi/sqflite_common_ffi.dart';
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // para que funcione en Windows
+  // Inicializa sqflite con soporte FFI para entornos de escritorio
   if (Platform.isWindows || Platform.isLinux) {
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
@@ -15,20 +15,21 @@ void main() {
   runApp(const MyApp());
 }
 
-
-//  sqlite
+// Clase Singleton para la gestión de la base de datos SQLite
 class DatabaseHelper {
   static final DatabaseHelper instance = DatabaseHelper._init();
   static Database? _database;
 
   DatabaseHelper._init();
 
+  // Obtiene la instancia activa de la BD o la inicializa si no existe
   Future<Database> get database async {
     if (_database != null) return _database!;
     _database = await _initDB('productos_acid.db', targetVersion: 1);
     return _database!;
   }
 
+  // Inicializa y abre la BD estableciendo esquemas y callbacks de migración
   Future<Database> _initDB(String filePath, {int targetVersion = 1}) async {
     final dbPath = await getDatabasesPath();
     final path = p.join(dbPath, filePath);
@@ -37,7 +38,7 @@ class DatabaseHelper {
       path,
       version: targetVersion,
       onCreate: (db, version) async {
-        // Esquema base: Versión 1
+        // Creación inicial del esquema (Versión 1)
         await db.execute('''
           CREATE TABLE items (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -46,14 +47,13 @@ class DatabaseHelper {
           )
         ''');
 
-        // Si se crea directamente en versión 2 o superior
+        // Si se instala directamente en versión 2 o mayor, agrega la nueva columna
         if (version >= 2) {
           await db.execute('ALTER TABLE items ADD COLUMN ubicacion_nodo TEXT;');
         }
       },
       onUpgrade: (db, oldVersion, newVersion) async {
-        // MIGRACIÓN MÓDULO 2: v1 -> v2
-        // Agrega la columna ubicacion_nodo sin perder ningún registro previo
+        // Ejecuta la migración del esquema de v1 a v2 agregando la nueva columna
         if (oldVersion < 2) {
           await db.execute(
             'ALTER TABLE items ADD COLUMN ubicacion_nodo TEXT DEFAULT "Sin asignar";',
@@ -63,31 +63,31 @@ class DatabaseHelper {
     );
   }
 
-  
+  // Retorna la versión actual registrada en la base de datos
   Future<int> getCurrentVersion() async {
     final db = await database;
     return await db.getVersion();
   }
 
-  // Disparador de la migración a v2
+  // Ejecuta el cierre de la conexión actual y reabre la BD en versión 2
   Future<bool> upgradeToV2() async {
     final currentV = await getCurrentVersion();
     if (currentV >= 2) {
       return false; 
     }
 
-    
+    // Cierra la conexión activa si está abierta
     if (_database != null) {
       await _database!.close();
       _database = null;
     }
 
-   
+    // Reabre la base de datos solicitando la versión target 2
     _database = await _initDB('productos_acid.db', targetVersion: 2);
     return true;
   }
 
-  // --- OPERACIONES CRUD ---
+  //OPERACIONES CRUD
 
   // CREATE
   Future<int> insertItem(String name, double price, [String? ubicacionNodo]) async {
@@ -97,6 +97,7 @@ class DatabaseHelper {
       'price': price,
     };
 
+    // Añade el campo opcional si la base de datos está en versión 2 o superior
     final currentVersion = await db.getVersion();
     if (currentVersion >= 2 && ubicacionNodo != null) {
       row['ubicacion_nodo'] = ubicacionNodo;
@@ -146,7 +147,7 @@ class DatabaseHelper {
     );
   }
 
-  // --- TRANSACCIÓN ACID POR LOTE (BATCH) ---
+  // Ejecuta inserciones múltiples dentro de una sola transacción
   Future<int> insertBatch(List<Map<String, dynamic>> itemsList) async {
     final db = await database;
 
@@ -160,15 +161,14 @@ class DatabaseHelper {
     });
   }
 
-  // Limpieza total
+  // Vacía la tabla eliminando todos los registros
   Future<int> clearAll() async {
     final db = await database;
     return await db.delete('items');
   }
 }
 
-
-// INTERFAZ 
+// INTERFAZ DE USUARIO
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
@@ -208,6 +208,7 @@ class _MyHomePageState extends State<MyHomePage> {
     _refreshItems();
   }
 
+  // Recarga los registros y refresca la versión de la BD
   Future<void> _refreshItems() async {
     setState(() => _isLoading = true);
     final data = await _dbHelper.getItems();
@@ -219,7 +220,7 @@ class _MyHomePageState extends State<MyHomePage> {
     });
   }
 
-  // ACCIÓN DEL BOTÓN: Migración a v2
+  // Dispara el proceso de migración del esquema a la versión 2
   Future<void> _handleMigration() async {
     setState(() => _isLoading = true);
     final success = await _dbHelper.upgradeToV2();
@@ -245,7 +246,7 @@ class _MyHomePageState extends State<MyHomePage> {
     }
   }
 
-  
+  // Muestra el modal para crear o editar registros
   void _showFormDialog({
     int? id,
     String? currentName,
@@ -273,6 +274,7 @@ class _MyHomePageState extends State<MyHomePage> {
                 decoration: const InputDecoration(labelText: 'Precio'),
                 keyboardType: const TextInputType.numberWithOptions(decimal: true),
               ),
+              // Campo visible únicamente a partir de la versión 2
               if (_dbVersion >= 2) ...[
                 const SizedBox(height: 10),
                 TextField(
@@ -300,6 +302,7 @@ class _MyHomePageState extends State<MyHomePage> {
 
               if (name.isEmpty) return;
 
+              // Inserta o actualiza según la presencia del ID
               if (id == null) {
                 await _dbHelper.insertItem(
                   name,
@@ -325,6 +328,7 @@ class _MyHomePageState extends State<MyHomePage> {
     );
   }
 
+  // Elimina un registro y refresca la lista
   Future<void> _deleteItem(int id) async {
     await _dbHelper.deleteItem(id);
     _refreshItems();
@@ -335,6 +339,7 @@ class _MyHomePageState extends State<MyHomePage> {
     }
   }
 
+  // Genera e inserta 1000 registros en un lote masivo usando transacciones
   Future<void> _runMassiveBatchInsert() async {
     setState(() => _isLoading = true);
     final stopwatch = Stopwatch()..start();
@@ -448,7 +453,7 @@ class _MyHomePageState extends State<MyHomePage> {
                   ),
                 ),
 
-                // Lista de elementos
+                // Lista principal de elementos recuperados
                 Expanded(
                   child: _items.isEmpty
                       ? const Center(child: Text('No hay registros guardados.'))

@@ -21,6 +21,7 @@ class MyApp extends StatelessWidget {
   }
 }
 
+// Widget principal que maneja la vista y el estado de los productos
 class ProductoListScreen extends StatefulWidget {
   const ProductoListScreen({super.key});
 
@@ -30,11 +31,14 @@ class ProductoListScreen extends StatefulWidget {
 
 class _ProductoListScreenState extends State<ProductoListScreen> {
 
+  // URL del servidor
   final String baseUrl = "http://10.10.227.195/api_productos";
 
+  // Controladores para capturar los datos de los campos de texto
   final TextEditingController _nombreController = TextEditingController();
   final TextEditingController _precioController = TextEditingController();
 
+  // Liberación de recursos de los controladores al cerrar el widget
   @override
   void dispose() {
     _nombreController.dispose();
@@ -68,6 +72,7 @@ class _ProductoListScreenState extends State<ProductoListScreen> {
       }),
     );
 
+    // Limpia las entradas y redibuja la interfaz tras una respuesta exitosa
     if (response.statusCode == 200) {
       _nombreController.clear();
       _precioController.clear();
@@ -83,13 +88,14 @@ class _ProductoListScreenState extends State<ProductoListScreen> {
       body: json.encode({'id': id}),
     );
 
+    // Redibuja la interfaz si la eliminación fue exitosa
     if (response.statusCode == 200) {
       setState(() {}); 
     }
   }
 
-  
   void _showFormDialog({Producto? producto}) {
+    // Carga los datos existentes si se pasa un producto para edición
     if (producto != null) {
       _nombreController.text = producto.nombre;
       _precioController.text = producto.precio;
@@ -140,12 +146,15 @@ class _ProductoListScreenState extends State<ProductoListScreen> {
         title: const Text('Productos (MySQL + Apache)'),
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
       ),
+      // FutureBuilder para manejar estados asíncronos
       body: FutureBuilder<List<Producto>>(
         future: _fetchProductos(),
         builder: (context, snapshot) {
+          // Estado de carga inicial
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
           } else if (snapshot.hasError) {
+            // Manejo y despliegue de errores HTTP o de conexión
             return Center(
               child: Padding(
                 padding: const EdgeInsets.all(16.0),
@@ -156,9 +165,11 @@ class _ProductoListScreenState extends State<ProductoListScreen> {
               ),
             );
           } else if (!snapshot.hasData || snapshot.data!.isEmpty) {
+            // Muestra mensaje si la lista obtenida está vacía
             return const Center(child: Text('No hay productos registrados.'));
           }
 
+          // Construcción de la lista desplegable de productos
           final productos = snapshot.data!;
           return ListView.builder(
             itemCount: productos.length,
@@ -170,10 +181,12 @@ class _ProductoListScreenState extends State<ProductoListScreen> {
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
+                    // Botón para abrir diálogo de edición
                     IconButton(
                       icon: const Icon(Icons.edit, color: Colors.blue),
                       onPressed: () => _showFormDialog(producto: prod),
                     ),
+                    // Botón para eliminar el producto
                     IconButton(
                       icon: const Icon(Icons.delete, color: Colors.red),
                       onPressed: () => _deleteProducto(prod.id),
@@ -185,6 +198,7 @@ class _ProductoListScreenState extends State<ProductoListScreen> {
           );
         },
       ),
+      // Botón flotante para crear un nuevo registro
       floatingActionButton: FloatingActionButton(
         onPressed: () => _showFormDialog(),
         child: const Icon(Icons.add),

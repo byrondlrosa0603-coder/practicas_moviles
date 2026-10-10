@@ -8,6 +8,7 @@ void main() {
   runApp(const MyApp());
 }
 
+// Configuración general del tema y ruta inicial
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
@@ -25,6 +26,7 @@ class MyApp extends StatelessWidget {
   }
 }
 
+// Pantalla principal i
 class MyHomePage extends StatefulWidget {
   const MyHomePage({super.key, required this.title});
 
@@ -35,10 +37,12 @@ class MyHomePage extends StatefulWidget {
 }
 
 class _MyHomePageState extends State<MyHomePage> {
+  // Controladores de texto para capturar los campos del formulario
   final TextEditingController _nombreController = TextEditingController();
   final TextEditingController _edadController = TextEditingController();
   final TextEditingController _telefonoController = TextEditingController();
   
+  // Instancia para el manejo del almacenamiento cifrado
   final EncryptedJsonStorage _storage = EncryptedJsonStorage();
   String _resultado = 'Sin datos leídos aún';
 
@@ -50,12 +54,13 @@ class _MyHomePageState extends State<MyHomePage> {
     super.dispose();
   }
 
-  // Guardar datos ingresados
+  // Captura, valida y envía a cifrar los datos
   Future<void> _guardarDatos() async {
     final String nombre = _nombreController.text.trim();
     final String edad = _edadController.text.trim();
     final String telefono = _telefonoController.text.trim();
 
+    // Validación de campos vacíos
     if (nombre.isEmpty || edad.isEmpty || telefono.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Por favor completa todos los campos')),
@@ -63,6 +68,7 @@ class _MyHomePageState extends State<MyHomePage> {
       return;
     }
 
+    // Estructura de datos a guardar
     final Map<String, dynamic> datos = {
       'nombre': nombre,
       'edad': edad,
@@ -70,10 +76,12 @@ class _MyHomePageState extends State<MyHomePage> {
       'fechaRegistro': DateTime.now().toIso8601String(),
     };
 
+    // Guarda los datos en el archivo JSON cifrado
     await _storage.saveEncryptedJson('usuario_cifrado.json', datos);
 
     if (!mounted) return;
 
+    // Actualiza la interfaz tras guardar
     setState(() {
       _resultado = '¡Datos guardados y cifrados con éxito!';
     });
@@ -83,11 +91,13 @@ class _MyHomePageState extends State<MyHomePage> {
     );
   }
 
+  // Lee, descifra y muestra la información guardada
   Future<void> _leerDatos() async {
     final datos = await _storage.readEncryptedJson('usuario_cifrado.json');
 
     if (!mounted) return;
 
+    // Actualiza el texto de resultado en la UI
     setState(() {
       if (datos != null) {
         _resultado =
@@ -115,6 +125,7 @@ class _MyHomePageState extends State<MyHomePage> {
             mainAxisAlignment: MainAxisAlignment.center,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              // Campos de texto del formulario
               TextField(
                 controller: _nombreController,
                 decoration: const InputDecoration(
@@ -144,6 +155,8 @@ class _MyHomePageState extends State<MyHomePage> {
                 ),
               ),
               const SizedBox(height: 24),
+              
+              // Botones para ejecutar guardar y leer
               ElevatedButton.icon(
                 onPressed: _guardarDatos,
                 icon: const Icon(Icons.lock),
@@ -162,6 +175,8 @@ class _MyHomePageState extends State<MyHomePage> {
                 ),
               ),
               const SizedBox(height: 28),
+              
+              // Contenedor que muestra el resultado
               Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
@@ -186,17 +201,19 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 }
 
+// Clase para manejar el cifrado AES y persistencia en JSON
 class EncryptedJsonStorage {
   
+  // Clave de 32 bytes
   final _key = encrypt.Key.fromUtf8('my32lengthsupersecretkey12345678');
   final _iv = encrypt.IV.fromUtf8('1234567890123456');
 
+  // Obtiene la referencia del archivo en el directorio local del dispositivo
   Future<File> _getLocalFile(String filename) async {
     final Directory directory = await getApplicationDocumentsDirectory();
     return File('${directory.path}/$filename');
   }
 
-  
   Future<void> saveEncryptedJson(
     String filename,
     Map<String, dynamic> data,
@@ -207,12 +224,12 @@ class EncryptedJsonStorage {
     final encrypter = encrypt.Encrypter(encrypt.AES(_key));
     final encryptedData = encrypter.encrypt(jsonString, iv: _iv);
 
-    
+    // Escribe los datos en Base64 en el archivo temporal y luego reemplaza el original
     await tempFile.writeAsString(encryptedData.base64);
     await tempFile.rename(file.path);
   }
 
-  
+  // Lee el archivo en Base64, descifra el contenido y lo convierte de nuevo a Map
   Future<Map<String, dynamic>?> readEncryptedJson(String filename) async {
     try {
       final file = await _getLocalFile(filename);
