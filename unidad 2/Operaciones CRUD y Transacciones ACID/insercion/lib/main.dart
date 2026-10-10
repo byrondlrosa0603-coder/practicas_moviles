@@ -6,7 +6,7 @@ import 'package:sqflite_common_ffi/sqflite_common_ffi.dart';
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Inicializar FFI en Windows o Linux
+  // para que funcione en Windows
   if (Platform.isWindows || Platform.isLinux) {
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
@@ -15,9 +15,8 @@ void main() {
   runApp(const MyApp());
 }
 
-// ==========================================
-// 1. GESTOR DE BASE DE DATOS LOCAL (SQLite)
-// ==========================================
+
+//  sqlite
 class DatabaseHelper {
   static final DatabaseHelper instance = DatabaseHelper._init();
   static Database? _database;
@@ -30,7 +29,6 @@ class DatabaseHelper {
     return _database!;
   }
 
-  // Permite abrir la BD especificando la versión destino
   Future<Database> _initDB(String filePath, {int targetVersion = 1}) async {
     final dbPath = await getDatabasesPath();
     final path = p.join(dbPath, filePath);
@@ -65,7 +63,7 @@ class DatabaseHelper {
     );
   }
 
-  // Obtiene la versión actual configurada en el PRAGMA de SQLite
+  
   Future<int> getCurrentVersion() async {
     final db = await database;
     return await db.getVersion();
@@ -75,23 +73,23 @@ class DatabaseHelper {
   Future<bool> upgradeToV2() async {
     final currentV = await getCurrentVersion();
     if (currentV >= 2) {
-      return false; // Ya está migrada
+      return false; 
     }
 
-    // Cerramos la conexión activa para forzar la reapertura con upgrade
+    
     if (_database != null) {
       await _database!.close();
       _database = null;
     }
 
-    // Abrimos con version: 2 (esto dispara onUpgrade)
+   
     _database = await _initDB('productos_acid.db', targetVersion: 2);
     return true;
   }
 
   // --- OPERACIONES CRUD ---
 
-  // CREATE: Compatible con v1 y v2 (ubicacion_nodo es opcional)
+  // CREATE
   Future<int> insertItem(String name, double price, [String? ubicacionNodo]) async {
     final db = await database;
     final Map<String, dynamic> row = {
@@ -111,13 +109,13 @@ class DatabaseHelper {
     );
   }
 
-  // READ: Obtiene todos los registros
+  // READ
   Future<List<Map<String, dynamic>>> getItems() async {
     final db = await database;
     return await db.query('items', orderBy: 'id DESC');
   }
 
-  // UPDATE: Permite actualizar también ubicacion_nodo si existe
+  // UPDATE
   Future<int> updateItem(int id, String name, double price, [String? ubicacionNodo]) async {
     final db = await database;
     final Map<String, dynamic> row = {
@@ -138,7 +136,7 @@ class DatabaseHelper {
     );
   }
 
-  // DELETE: Elimina un registro
+  // DELETE
   Future<int> deleteItem(int id) async {
     final db = await database;
     return await db.delete(
@@ -169,9 +167,9 @@ class DatabaseHelper {
   }
 }
 
-// ==========================================
-// 2. INTERFAZ DE USUARIO (FLUTTER)
-// ==========================================
+
+// INTERFAZ 
+
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
@@ -247,7 +245,7 @@ class _MyHomePageState extends State<MyHomePage> {
     }
   }
 
-  // CREATE / UPDATE DIALOG
+  
   void _showFormDialog({
     int? id,
     String? currentName,

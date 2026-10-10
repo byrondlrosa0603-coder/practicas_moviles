@@ -13,7 +13,6 @@ class MyApp extends StatelessWidget {
  theme: ThemeData(
  primarySwatch: Colors.blue,
  ),
- // Aquí iremos cambiando la pantalla activa según cada tema
  home: const ControlEjemplo(),
  );
  }

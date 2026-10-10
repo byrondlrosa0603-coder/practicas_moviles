@@ -47,11 +47,9 @@ class _CsvScreenState extends State<CsvScreen> {
         _loadedData = data;
       });
     } catch (e) {
-      // Si ocurre el error, limpiamos la tabla
       setState(() {
         _loadedData = null; 
       });
-      // Mostramos el mensaje en pantalla
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -136,7 +134,6 @@ class CsvNodeManager {
     if (originalChecksum == recalculatedChecksum) {
       return const CsvToListConverter(eol: '\n').convert(csvBody);
     } else {
-      // Lanzamos la excepción para que sea atrapada por el try/catch de la pantalla
       throw FormatException("ALERTA: El CSV fue alterado.");
     }
   }

@@ -72,7 +72,6 @@ class _MyHomePageState extends State<MyHomePage> {
 
     await _storage.saveEncryptedJson('usuario_cifrado.json', datos);
 
-    // Evita la advertencia de 'use_build_context_synchronously'
     if (!mounted) return;
 
     setState(() {
@@ -84,7 +83,6 @@ class _MyHomePageState extends State<MyHomePage> {
     );
   }
 
-  // Leer y descifrar datos
   Future<void> _leerDatos() async {
     final datos = await _storage.readEncryptedJson('usuario_cifrado.json');
 
@@ -93,10 +91,10 @@ class _MyHomePageState extends State<MyHomePage> {
     setState(() {
       if (datos != null) {
         _resultado =
-            '📋 Datos Leídos:\n\n'
-            '👤 Nombre: ${datos['nombre']}\n'
-            '🎂 Edad: ${datos['edad']} años\n'
-            '📞 Teléfono: ${datos['telefono']}';
+            ' Datos Leídos:\n\n'
+            ' Nombre: ${datos['nombre']}\n'
+            ' Edad: ${datos['edad']} años\n'
+            ' Teléfono: ${datos['telefono']}';
       } else {
         _resultado = 'No se encontró el archivo cifrado o ocurrió un error.';
       }
@@ -189,7 +187,7 @@ class _MyHomePageState extends State<MyHomePage> {
 }
 
 class EncryptedJsonStorage {
-  // Clave de 32 caracteres y IV de 16 caracteres para AES-256
+  
   final _key = encrypt.Key.fromUtf8('my32lengthsupersecretkey12345678');
   final _iv = encrypt.IV.fromUtf8('1234567890123456');
 
@@ -198,7 +196,7 @@ class EncryptedJsonStorage {
     return File('${directory.path}/$filename');
   }
 
-  // Guardar datos JSON cifrados con escritura atómica (.tmp -> .json)
+  
   Future<void> saveEncryptedJson(
     String filename,
     Map<String, dynamic> data,
@@ -209,12 +207,12 @@ class EncryptedJsonStorage {
     final encrypter = encrypt.Encrypter(encrypt.AES(_key));
     final encryptedData = encrypter.encrypt(jsonString, iv: _iv);
 
-    // Escritura atómica para garantizar persistencia e integridad
+    
     await tempFile.writeAsString(encryptedData.base64);
     await tempFile.rename(file.path);
   }
 
-  // Leer y descifrar JSON
+  
   Future<Map<String, dynamic>?> readEncryptedJson(String filename) async {
     try {
       final file = await _getLocalFile(filename);

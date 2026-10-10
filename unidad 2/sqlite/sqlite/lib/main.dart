@@ -16,10 +16,6 @@ void main() {
   runApp(const MyApp());
 }
 
-// ==========================================
-// MODELO Y DATABASE HELPER
-// ==========================================
-
 class SensorReading {
   final int? id;
   final String sensorType;
@@ -57,7 +53,6 @@ class DatabaseHelper {
 
   Future<Database> _initDB(String filePath) async {
     final dbPath = await getDatabasesPath();
-    // 2. Usamos el alias 'p' y renombramos la variable a 'fullPath'
     final fullPath = p.join(dbPath, filePath);
 
     return await openDatabase(
@@ -213,7 +208,7 @@ class _MyHomePageState extends State<MyHomePage> {
           children: [
             TextField(
               controller: _typeController,
-              decoration: const InputDecoration(labelText: 'Tipo de sensor (ej. temperature)'),
+              decoration: const InputDecoration(labelText: 'Tipo de sensor'),
             ),
             TextField(
               controller: _valueController,
