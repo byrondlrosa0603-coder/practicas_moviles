@@ -3,9 +3,12 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'telemetry_database.dart';
 
+// Inicia la aplicación Flutter.
 void main() => runApp(const MyApp());
 
+// Configura el tema y la pantalla inicial.
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
@@ -18,6 +21,7 @@ class MyApp extends StatelessWidget {
       );
 }
 
+// Pantalla principal con conexión y lecturas del ESP32.
 class DashboardPage extends StatefulWidget {
   const DashboardPage({super.key});
 
@@ -26,6 +30,7 @@ class DashboardPage extends StatefulWidget {
 }
 
 class _DashboardPageState extends State<DashboardPage> {
+  // Datos de acceso y estado de la pantalla.
   final _formKey = GlobalKey<FormState>();
   // Si cambian, edita aquí la URL, el correo y el Device ID.
   static const String _baseUrl = 'https://thingsboard.cloud';
@@ -37,10 +42,29 @@ class _DashboardPageState extends State<DashboardPage> {
   String? _error;
   bool _loading = false;
   bool _connected = false;
+  List<Map<String, Object?>> _history = [];
   final Map<String, String> _values = {
     'temperature': '--', 'humidity': '--', 'air_quality_ppm': '--', 'rssi': '--',
   };
 
+  // Carga las lecturas guardadas al abrir la pantalla.
+  @override
+  void initState() {
+    super.initState();
+    _loadHistory();
+  }
+
+  // Recupera las últimas lecturas de la base local.
+  Future<void> _loadHistory() async {
+    try {
+      final rows = await TelemetryDatabase.instance.getRecent();
+      if (mounted) setState(() => _history = rows);
+    } catch (e) {
+      if (mounted) setState(() => _error = 'No se pudo abrir el historial SQLite: $e');
+    }
+  }
+
+  // Detiene tareas y libera el controlador al cerrar la pantalla.
   @override
   void dispose() {
     _timer?.cancel();
@@ -48,6 +72,7 @@ class _DashboardPageState extends State<DashboardPage> {
     super.dispose();
   }
 
+  // Inicia sesión en ThingsBoard y comienza la actualización periódica.
   Future<void> _connect() async {
     if (!_formKey.currentState!.validate()) return;
     _timer?.cancel();
@@ -75,6 +100,7 @@ class _DashboardPageState extends State<DashboardPage> {
     }
   }
 
+  // Convierte respuestas HTTP en mensajes fáciles de entender.
   String _httpMessage(String action, http.Response response) {
     final detail = response.body.trim();
     switch (response.statusCode) {
@@ -85,11 +111,13 @@ class _DashboardPageState extends State<DashboardPage> {
     }
   }
 
+  // Muestra un error y limpia el estado de conexión.
   void _showError(String message) {
     if (!mounted) return;
     setState(() { _loading = false; _connected = false; _jwtToken = null; _error = message; });
   }
 
+  // Consulta la telemetría, actualiza la pantalla y guarda la muestra.
   Future<void> _fetchTelemetry() async {
     final token = _jwtToken;
     if (token == null) return;
@@ -109,6 +137,7 @@ class _DashboardPageState extends State<DashboardPage> {
       final data = jsonDecode(response.body);
       if (data is! Map<String, dynamic>) throw const FormatException('Formato de telemetría no válido.');
       if (!mounted) return;
+      final sample = <String, Object?>{};
       setState(() {
         for (final key in _values.keys.toList()) {
           final readings = data[key];
@@ -118,6 +147,12 @@ class _DashboardPageState extends State<DashboardPage> {
         }
         _error = null;
       });
+      for (final key in _values.keys) {
+        sample[key] = double.tryParse(_values[key]!);
+      }
+      sample['recorded_at'] = DateTime.now().toIso8601String();
+      await TelemetryDatabase.instance.insert(sample);
+      await _loadHistory();
     } on TimeoutException {
       _showError('Tiempo de espera agotado al leer la telemetría.');
     } catch (e) {
@@ -125,6 +160,7 @@ class _DashboardPageState extends State<DashboardPage> {
     }
   }
 
+  // Construye un campo de formulario con validación básica.
   Widget _field(String label, TextEditingController controller, {bool obscure = false, String? hint}) => Padding(
         padding: const EdgeInsets.only(bottom: 12),
         child: TextFormField(
@@ -134,13 +170,21 @@ class _DashboardPageState extends State<DashboardPage> {
         ),
       );
 
-  Widget _reading(String key, String label, String unit, IconData icon, Color color) => Card(
-        child: ListTile(
-          leading: Icon(icon, color: color, size: 36), title: Text(label),
-          trailing: Text('${_values[key]} $unit', style: const TextStyle(fontSize: 19, fontWeight: FontWeight.bold)),
-        ),
-      );
+  // Muestra una lectura; resalta en rojo temperaturas de 26 °C o más.
+  Widget _reading(String key, String label, String unit, IconData icon, Color color) {
+    final temperature = key == 'temperature' ? double.tryParse(_values[key] ?? '') : null;
+    final isHot = temperature != null && temperature >= 26;
+    final readingColor = isHot ? Colors.red : color;
+    return Card(
+      child: ListTile(
+        leading: Icon(icon, color: readingColor, size: 36),
+        title: Text(label, style: TextStyle(color: isHot ? Colors.red : null, fontWeight: isHot ? FontWeight.bold : null)),
+        trailing: Text('${_values[key]} $unit', style: TextStyle(fontSize: 19, fontWeight: FontWeight.bold, color: isHot ? Colors.red : null)),
+      ),
+    );
+  }
 
+  // Dibuja el formulario, las lecturas actuales y el historial.
   @override
   Widget build(BuildContext context) => Scaffold(
         appBar: AppBar(
@@ -164,6 +208,31 @@ class _DashboardPageState extends State<DashboardPage> {
             _reading('air_quality_ppm', 'Calidad del aire', 'PPM', Icons.air, Colors.green),
             _reading('rssi', 'Señal Wi-Fi (RSSI)', 'dBm', Icons.wifi, Colors.blueGrey),
           ],
+          const SizedBox(height: 20),
+          const Text('Historial de lecturas', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+          if (_history.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 16),
+              child: Text('Aún no hay lecturas guardadas.'),
+            )
+          else
+            ..._history.map((row) {
+              final temperature = row['temperature'];
+              final isHot = temperature is num && temperature >= 26;
+              final date = DateTime.tryParse(row['recorded_at']?.toString() ?? '')?.toLocal();
+              final dateText = date == null
+                  ? 'Fecha desconocida'
+                  : '${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}/${date.year} ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}:${date.second.toString().padLeft(2, '0')}';
+              return Card(
+                child: ListTile(
+                  leading: Icon(Icons.thermostat, color: isHot ? Colors.red : Colors.orange),
+                  title: Text('Temperatura: ${temperature ?? '--'} °C',
+                      style: TextStyle(color: isHot ? Colors.red : null, fontWeight: isHot ? FontWeight.bold : null)),
+                  subtitle: Text('$dateText\nHumedad: ${row['humidity'] ?? '--'} % · Aire: ${row['air_quality_ppm'] ?? '--'} PPM · RSSI: ${row['rssi'] ?? '--'} dBm'),
+                  isThreeLine: true,
+                ),
+              );
+            }),
         ]),
       );
 }
