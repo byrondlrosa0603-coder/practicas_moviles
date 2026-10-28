@@ -16,7 +16,7 @@ const supabaseUrl = String.fromEnvironment(
 );
 const supabaseAnonKey = String.fromEnvironment(
   'SUPABASE_ANON_KEY',
-  defaultValue: '',
+  defaultValue: '',//vacia porque git no me deja subir con la clave expuesta
 );
 const deviceName = String.fromEnvironment(
   'DEVICE_NAME',
